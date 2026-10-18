@@ -1,0 +1,139 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: flash-sale-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: flash_sale_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: flash-sale-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  kafka:
+    image: bitnamilegacy/kafka:3.7.0
+    container_name: flash-sale-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: "controller,broker"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@flash-sale-kafka:9093"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://flash-sale-kafka:29092,EXTERNAL://localhost:9092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    restart: unless-stopped
+
+  akhq:
+    image: tchiotludo/akhq:latest
+    container_name: flash-sale-akhq
+    ports:
+      - "8080:8080"
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            docker-kafka:
+              properties:
+                bootstrap.servers: "flash-sale-kafka:29092"
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: flash-sale-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+    restart: unless-stopped
+
+  gateway-service:
+    build: ./services/gateway
+    container_name: flash-sale-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      REDIS_ADDR: "redis:6379"
+      JWT_SECRET: "my_super_secret_key_12345"
+      INVENTORY_SERVICE_URL: "http://flash-sale-inventory:3001"
+      ORDER_SERVICE_URL: "http://flash-sale-orders:8081"
+      RATE_LIMIT: "5"
+      RATE_LIMIT_WINDOW: "10s"
+    depends_on:
+      - redis
+      - inventory-service
+      - order-service
+    restart: unless-stopped
+
+  inventory-service:
+    build: ./services/inventory
+    container_name: flash-sale-inventory
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+      REDIS_ADDR: "redis:6379"
+      KAFKA_BROKER: "kafka:29092"
+    depends_on:
+      - redis
+      - kafka
+    restart: unless-stopped
+
+  order-service:
+    build: ./services/order-service
+    container_name: flash-sale-orders
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/flash_sale_db"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+    depends_on:
+      - postgres
+      - kafka
+    restart: unless-stopped
+
+  payment-service:
+    build: ./services/payment-service
+    container_name: flash-sale-payments
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/flash_sale_db"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+    depends_on:
+      - postgres
+      - kafka
+    restart: unless-stopped
+
+  notification-service:
+    build: ./services/notification
+    container_name: flash-sale-notifications
+    ports:
+      - "3002:3002"
+    environment:
+      KAFKA_BROKER: "kafka:29092"
+    depends_on:
+      - kafka
+    restart: always
+
+volumes:
+  postgres_data:
+  kafka_data:
