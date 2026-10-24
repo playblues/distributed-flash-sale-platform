@@ -46,7 +46,6 @@ class PaymentEventConsumerTest {
         
         when(objectMapper.readValue(message, PaymentEvent.class)).thenThrow(new RuntimeException("Deserialization error"));
 
-        // Should not throw an exception because it's caught in the method
         paymentEventConsumer.consumePaymentEvent(message);
 
         verify(objectMapper, times(1)).readValue(message, PaymentEvent.class);

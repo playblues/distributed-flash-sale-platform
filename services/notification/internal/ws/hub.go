@@ -9,46 +9,60 @@ import (
 )
 
 type Hub struct {
-	clients   map[int64]*websocket.Conn
+	clients   map[int64]map[*websocket.Conn]bool
 	clientsMu sync.RWMutex
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients: make(map[int64]*websocket.Conn),
+		clients: make(map[int64]map[*websocket.Conn]bool),
 	}
 }
 
 func (h *Hub) Register(userID int64, conn *websocket.Conn) {
 	h.clientsMu.Lock()
 	defer h.clientsMu.Unlock()
-	h.clients[userID] = conn
-	fmt.Printf("Пользователь %d подключился к WebSockets\n", userID)
+	if _, exists := h.clients[userID]; !exists {
+		h.clients[userID] = make(map[*websocket.Conn]bool)
+	}
+	h.clients[userID][conn] = true
+	fmt.Printf("Пользователь %d подключился к WebSockets (активных вкладок: %d)\n", userID, len(h.clients[userID]))
 }
 
-func (h *Hub) Unregister(userID int64) {
+func (h *Hub) Unregister(userID int64, conn *websocket.Conn) {
 	h.clientsMu.Lock()
 	defer h.clientsMu.Unlock()
-	if conn, exists := h.clients[userID]; exists {
+	if conns, exists := h.clients[userID]; exists {
+		delete(conns, conn)
 		_ = conn.Close()
-		delete(h.clients, userID)
-		fmt.Printf("Пользователь %d отключился\n", userID)
+		if len(conns) == 0 {
+			delete(h.clients, userID)
+			fmt.Printf("Все сессии пользователя %d отключены\n", userID)
+		}
 	}
 }
 
 func (h *Hub) SendNotification(userID int64, message string) bool {
 	h.clientsMu.RLock()
-	conn, exists := h.clients[userID]
+	conns, exists := h.clients[userID]
+	if !exists || len(conns) == 0 {
+		h.clientsMu.RUnlock()
+		return false
+	}
+	activeConns := make([]*websocket.Conn, 0, len(conns))
+	for c := range conns {
+		activeConns = append(activeConns, c)
+	}
 	h.clientsMu.RUnlock()
 
-	if !exists {
-		return false
+	sentAny := false
+	for _, conn := range activeConns {
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
+			log.Printf("Ошибка отправки WS сессии пользователя %d: %v", userID, err)
+			h.Unregister(userID, conn)
+		} else {
+			sentAny = true
+		}
 	}
-
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
-		log.Printf("Ошибка отправки WS пользователю %d: %v", userID, err)
-		h.Unregister(userID)
-		return false
-	}
-	return true
+	return sentAny
 }

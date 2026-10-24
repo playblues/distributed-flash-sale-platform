@@ -73,10 +73,14 @@ func (h *GatewayHandler) Buy(c *fiber.Ctx) error {
 			fmt.Printf("Inventory Service вернул статус: %d\n", resp.StatusCode)
 		}
 		if resp != nil && resp.StatusCode == http.StatusConflict {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"status": "sold_out",
-				"error":  "Билеты закончились",
-			})
+			defer resp.Body.Close()
+			invBody, _ := io.ReadAll(resp.Body)
+			var invErr map[string]interface{}
+			_ = json.Unmarshal(invBody, &invErr)
+			return c.Status(fiber.StatusConflict).JSON(invErr)
+		}
+		if resp != nil {
+			_ = resp.Body.Close()
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Сервис инвентаризации недоступен",
@@ -99,10 +103,21 @@ func (h *GatewayHandler) Buy(c *fiber.Ctx) error {
 			fmt.Printf("Ошибка соединения с Order Service: %v\n", err)
 		} else {
 			errBody, _ := io.ReadAll(orderResp.Body)
-			fmt.Printf("Order Service вернул статус: %d, Ошибка: %s", orderResp.StatusCode, errBody)
+			fmt.Printf("Order Service вернул статус: %d, Ошибка: %s\n", orderResp.StatusCode, errBody)
+			_ = orderResp.Body.Close()
 		}
+
+		rollbackURL := fmt.Sprintf("%s/api/v1/inventory/rollback?user_id=%v&event_id=%v", h.inventoryServiceURL, userID, req.EventID)
+		rbResp, rbErr := http.Post(rollbackURL, "application/json", nil)
+		if rbErr != nil {
+			fmt.Printf("Ошибка выполнения отката брони в Inventory: %v\n", rbErr)
+		} else {
+			_ = rbResp.Body.Close()
+			fmt.Printf("Успешный откат брони для user %v на event %v после сбоя Order Service\n", userID, req.EventID)
+		}
+
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Не удалось создать заказ в системе",
+			"error": "Не удалось создать заказ в системе (бронь автоматически снята)",
 		})
 	}
 	defer orderResp.Body.Close()

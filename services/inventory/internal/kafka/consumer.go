@@ -48,16 +48,16 @@ func StartPaymentConsumer(repo *repository.InventoryRepository) {
 		}
 
 		if event.PaymentStatus == "FAILED" {
-			log.Printf("Оплата отклонена (Заказ %d). Откат брони...", event.OrderID)
+			log.Printf("Оплата отклонена (Заказ %d, Event %d). Откат брони...", event.OrderID, event.EventID)
 
-			eventIDStr := fmt.Sprintf("%d", event.OrderID)
+			eventIDStr := fmt.Sprintf("%d", event.EventID)
 			userIDStr := fmt.Sprintf("%d", event.UserID)
 
 			err := repo.RollBack(context.Background(), eventIDStr, userIDStr)
 			if err != nil {
 				log.Printf("Ошибка отката в Redis: %v", err)
 			} else {
-				log.Printf("Билет на Event %s успешно возвращен на склад", eventIDStr)
+				log.Printf("Билет на Event %s успешно возвращен на склад (user: %s)", eventIDStr, userIDStr)
 			}
 		}
 	}

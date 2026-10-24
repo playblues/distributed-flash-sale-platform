@@ -5,7 +5,10 @@ import com.example.orderservice.domain.Order;
 import com.example.orderservice.dto.OrderRequest;
 import com.example.orderservice.dto.OrderResponse;
 import com.example.orderservice.kafka.OrderEventProducer;
+import com.example.orderservice.domain.OutboxMessage;
 import com.example.orderservice.repository.OrderRepository;
+import com.example.orderservice.repository.OutboxRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,10 +18,21 @@ import java.time.LocalDateTime;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class OrderService {
     private final OrderRepository orderRepository;
+    private final OutboxRepository outboxRepository;
     private final OrderEventProducer eventProducer;
+    private final ObjectMapper objectMapper;
+
+    public OrderService(OrderRepository orderRepository,
+                        OutboxRepository outboxRepository,
+                        OrderEventProducer eventProducer,
+                        ObjectMapper objectMapper) {
+        this.orderRepository = orderRepository;
+        this.outboxRepository = outboxRepository;
+        this.eventProducer = eventProducer;
+        this.objectMapper = objectMapper;
+    }
 
     @Transactional
     public OrderResponse createOrder(OrderRequest request){
@@ -34,7 +48,22 @@ public class OrderService {
 
         OrderResponse response = mapToResponse(savedOrder);
 
-        eventProducer.sendOrderCreatedEvent(response);
+        try {
+            String payload = objectMapper.writeValueAsString(response);
+            OutboxMessage outboxMessage = OutboxMessage.builder()
+                    .aggregateType("ORDER")
+                    .aggregateId(savedOrder.getId())
+                    .eventType("ORDER_CREATED")
+                    .payload(payload)
+                    .processed(false)
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            outboxRepository.save(outboxMessage);
+            log.info("Событие для заказа №{} успешно записано в Outbox", savedOrder.getId());
+        } catch (Exception e) {
+            log.error("Ошибка сохранения сообщения в Outbox: {}", e.getMessage(), e);
+            throw new RuntimeException("Не удалось сохранить событие заказа в Outbox", e);
+        }
 
         return response;
     }

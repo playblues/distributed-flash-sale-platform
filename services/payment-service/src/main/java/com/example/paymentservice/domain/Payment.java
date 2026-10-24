@@ -19,5 +19,5 @@ public class Payment {
     private Long orderId;
     private BigDecimal amount;
     private String status;
-    private LocalDateTime cteatedAt;
+    private LocalDateTime createdAt;
 }

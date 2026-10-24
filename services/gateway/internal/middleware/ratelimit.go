@@ -13,11 +13,11 @@ func SlidingWindowLimiter(rdb *redis.Client, limit int64, window time.Duration) 
 
 	ctx := context.Background()
 	return func(c *fiber.Ctx) error {
-		ip := c.IP()
+		ip := c.Get("X-Forwarded-For")
+		if ip == "" {
+			ip = c.IP()
+		}
 		key := fmt.Sprintf("rate_limit:sliding:%s", ip)
-
-		limit := int64(5)
-		window := 10 * time.Second
 
 		now := time.Now()
 		nowMS := now.UnixMilli()

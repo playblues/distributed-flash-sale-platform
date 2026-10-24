@@ -31,3 +31,8 @@ kafka_data/
 *.docx
 .DS_Store
 Thumbs.db
+
+node_modules/
+**/node_modules/
+dist/
+**/dist/

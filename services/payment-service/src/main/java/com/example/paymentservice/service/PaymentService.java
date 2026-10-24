@@ -15,7 +15,6 @@ import java.time.LocalDateTime;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PaymentService {
 
     private final PaymentRepository paymentRepository;
@@ -24,9 +23,17 @@ public class PaymentService {
 
     private static final String PAYMENTS_TOPIC = "payments-topic";
 
+    public PaymentService(PaymentRepository paymentRepository,
+                          KafkaTemplate<String, Object> kafkaTemplate,
+                          ObjectMapper objectMapper) {
+        this.paymentRepository = paymentRepository;
+        this.kafkaTemplate = kafkaTemplate;
+        this.objectMapper = objectMapper;
+    }
+
     @Transactional
     public void processPayment(OrderEvent orderEvent){
-        log.info("Начало оработки платежа для заказа №{}", orderEvent.id());
+        log.info("Начало обработки платежа для заказа №{}", orderEvent.id());
 
         if (orderEvent.price().doubleValue() == 666.0) {
             log.error("Имитация сбоя БД при обработке заказа №{}", orderEvent.id());
@@ -42,7 +49,7 @@ public class PaymentService {
                 .orderId(orderEvent.id())
                 .amount(orderEvent.price())
                 .status(paymentStatus)
-                .cteatedAt(LocalDateTime.now())
+                .createdAt(LocalDateTime.now())
                 .build();
         paymentRepository.save(payment);
         log.info("Платёж сохранен в БД со статусом {}", paymentStatus);

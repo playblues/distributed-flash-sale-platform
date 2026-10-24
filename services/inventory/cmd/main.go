@@ -42,8 +42,10 @@ func main() {
 		AllowMethods: "GET,POST,HEAD,PUT,DELETE,PATCH,OPTIONS",
 	}))
 
+	app.Get("/api/v1/inventory/stock", h.GetStock)
 	app.Post("/api/v1/inventory/init", h.InitStock)
 	app.Post("/api/v1/inventory/reserve", h.Reserve)
+	app.Post("/api/v1/inventory/rollback", h.Rollback)
 
 	go kafka.StartPaymentConsumer(repo)
 

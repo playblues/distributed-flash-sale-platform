@@ -33,7 +33,7 @@ func (h *Handler) HandleConnection(c *websocket.Conn) {
 	}
 
 	h.hub.Register(userID, c)
-	defer h.hub.Unregister(userID)
+	defer h.hub.Unregister(userID, c)
 
 	for {
 		messageType, msg, err := c.ReadMessage()
