@@ -70,7 +70,7 @@ export function EventConsole({ logs, onClearLogs }) {
         className="flex-1 bg-slate-950 border border-slate-800/60 rounded-xl p-3.5 overflow-y-auto max-h-80 font-mono text-xs space-y-1.5"
       >
         {logs.length === 0 ? (
-          <div className="text-slate-600">// Логи пусты...</div>
+          <div className="text-slate-600">Логи пусты...</div>
         ) : (
           logs.map((item, idx) => (
             <div key={idx} className={`${getLogTextColor(item.type)} flex items-start gap-1.5 leading-relaxed`}>

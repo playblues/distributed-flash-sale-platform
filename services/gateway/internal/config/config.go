@@ -9,13 +9,15 @@ import (
 )
 
 type Config struct {
-	Port                string
-	RedisAddr           string
-	JWTSecret           string
-	InventoryServiceURL string
-	OrderServiceURL     string
-	RateLimit           int64
-	RateLimitWindow     time.Duration
+	Port                 string
+	RedisAddr            string
+	JWTSecret            string
+	InventoryServiceURL  string
+	OrderServiceURL      string
+	InventoryGRPCEndpoint string
+	OrderGRPCEndpoint     string
+	RateLimit            int64
+	RateLimitWindow      time.Duration
 }
 
 func LoadConfig() (*Config, error) {
@@ -25,15 +27,18 @@ func LoadConfig() (*Config, error) {
 	rateLimitWindow, _ := time.ParseDuration(getEnv("RATE_LIMIT_WINDOW", "10s"))
 
 	return &Config{
-		Port:                getEnv("Port", "3000"),
-		RedisAddr:           getEnv("REDIS_ADDR", "localhost:6379"),
-		JWTSecret:           getEnv("JWT_SECRET", "default_secret_key"),
-		InventoryServiceURL: getEnv("INVENTORY_SERVICE_URL", "http://localhost:3001"),
-		OrderServiceURL:     getEnv("ORDER_SERVICE_URL", "http://localhost:8081"),
-		RateLimit:           rateLimit,
-		RateLimitWindow:     rateLimitWindow,
+		Port:                  getEnv("PORT", "3000"),
+		RedisAddr:             getEnv("REDIS_ADDR", "localhost:6379"),
+		JWTSecret:             getEnv("JWT_SECRET", "default_secret_key"),
+		InventoryServiceURL:   getEnv("INVENTORY_SERVICE_URL", "http://localhost:3001"),
+		OrderServiceURL:       getEnv("ORDER_SERVICE_URL", "http://localhost:8081"),
+		InventoryGRPCEndpoint: getEnv("INVENTORY_GRPC_ENDPOINT", "localhost:50051"),
+		OrderGRPCEndpoint:     getEnv("ORDER_GRPC_ENDPOINT", "localhost:9091"),
+		RateLimit:             rateLimit,
+		RateLimitWindow:       rateLimitWindow,
 	}, nil
 }
+
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value

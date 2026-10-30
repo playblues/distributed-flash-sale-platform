@@ -9,7 +9,7 @@ import java.math.BigDecimal;
 
 public record OrderRequest(
     @JsonProperty("user_id")
-    @JsonAlias("userId")
+    @JsonAlias({"userId", "userID"})
     @NotNull(message = "User ID не может быть пустым")
     Long userId,
 

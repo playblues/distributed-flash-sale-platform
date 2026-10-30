@@ -1,28 +1,30 @@
 package handler
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
+
+	inventoryv1 "gateway-service/pkg/api/inventory/v1"
+	orderv1 "gateway-service/pkg/api/order/v1"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type GatewayHandler struct {
-	jwtSecret           string
-	inventoryServiceURL string
-	orderServiceURL     string
+	jwtSecret       string
+	inventoryClient inventoryv1.InventoryServiceClient
+	orderClient     orderv1.OrderServiceClient
 }
 
-func NewGatewayHandler(jwtSecret string, inventoryServiceURL string, orderServiceURL string) *GatewayHandler {
+func NewGatewayHandler(jwtSecret string, inventoryClient inventoryv1.InventoryServiceClient, orderClient orderv1.OrderServiceClient) *GatewayHandler {
 	return &GatewayHandler{
-		jwtSecret:           jwtSecret,
-		inventoryServiceURL: inventoryServiceURL,
-		orderServiceURL:     orderServiceURL,
+		jwtSecret:       jwtSecret,
+		inventoryClient: inventoryClient,
+		orderClient:     orderClient,
 	}
 }
 
@@ -51,10 +53,17 @@ type BuyRequest struct {
 }
 
 func (h *GatewayHandler) Buy(c *fiber.Ctx) error {
-	userID := c.Locals("user_id")
+	var uid int64 = 42
+	switch v := c.Locals("user_id").(type) {
+	case float64:
+		uid = int64(v)
+	case int64:
+		uid = v
+	case int:
+		uid = int64(v)
+	}
 
 	var req BuyRequest
-
 	if err := c.BodyParser(&req); err != nil || req.Price == 0 {
 		req.EventID = 1
 		req.Price = 5000.0
@@ -63,66 +72,75 @@ func (h *GatewayHandler) Buy(c *fiber.Ctx) error {
 		req.EventID = 1
 	}
 
-	inventoryURL := fmt.Sprintf("%s/api/v1/inventory/reserve?user_id=%v&event_id=%v", h.inventoryServiceURL, userID, req.EventID)
-	resp, err := http.Post(inventoryURL, "application/json", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if err != nil {
-			fmt.Printf("Ошибка соединения с Inventory: %v\n", err)
-		} else {
-			fmt.Printf("Inventory Service вернул статус: %d\n", resp.StatusCode)
-		}
-		if resp != nil && resp.StatusCode == http.StatusConflict {
-			defer resp.Body.Close()
-			invBody, _ := io.ReadAll(resp.Body)
-			var invErr map[string]interface{}
-			_ = json.Unmarshal(invBody, &invErr)
-			return c.Status(fiber.StatusConflict).JSON(invErr)
-		}
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
+	reserveResp, err := h.inventoryClient.ReserveStock(ctx, &inventoryv1.ReserveStockRequest{
+		EventId: req.EventID,
+		UserId:  uid,
+	})
+
+	if err != nil {
+		st, _ := status.FromError(err)
+		fmt.Printf("gRPC ошибка соединения с Inventory Service: %v (code: %s)\n", st.Message(), st.Code())
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Сервис инвентаризации недоступен",
+			"error": "Сервис инвентаризации недоступен по gRPC",
 		})
 	}
-	_ = resp.Body.Close()
 
-	orderPayload := map[string]interface{}{
-		"userId":  userID,
-		"eventId": req.EventID,
-		"price":   req.Price,
+	if reserveResp.Status != inventoryv1.ReservationStatus_RESERVATION_STATUS_RESERVED {
+		if reserveResp.Status == inventoryv1.ReservationStatus_RESERVATION_STATUS_ALREADY_RESERVED {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"status": "already_reserved",
+				"error":  "У вас уже есть активная бронь на это событие",
+			})
+		}
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"status": "sold_out",
+			"error":  "Билеты закончились",
+		})
 	}
-	payloadBytes, _ := json.Marshal(orderPayload)
 
-	orderURL := fmt.Sprintf("%s/api/v1/orders", h.orderServiceURL)
-	orderResp, err := http.Post(orderURL, "application/json", bytes.NewBuffer(payloadBytes))
+	orderResp, err := h.orderClient.CreateOrder(ctx, &orderv1.CreateOrderRequest{
+		UserId:  uid,
+		EventId: req.EventID,
+		Price:   req.Price,
+	})
 
-	if err != nil || orderResp.StatusCode != http.StatusCreated {
-		if err != nil {
-			fmt.Printf("Ошибка соединения с Order Service: %v\n", err)
+	if err != nil {
+		st, _ := status.FromError(err)
+		fmt.Printf("gRPC ошибка создания заказа в Order Service: %v (code: %s)\n", st.Message(), st.Code())
+
+		rbCtx, rbCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer rbCancel()
+
+		_, rbErr := h.inventoryClient.RollbackStock(rbCtx, &inventoryv1.RollbackStockRequest{
+			EventId: req.EventID,
+			UserId:  uid,
+		})
+		if rbErr != nil {
+			fmt.Printf("Ошибка отката брони через gRPC: %v\n", rbErr)
 		} else {
-			errBody, _ := io.ReadAll(orderResp.Body)
-			fmt.Printf("Order Service вернул статус: %d, Ошибка: %s\n", orderResp.StatusCode, errBody)
-			_ = orderResp.Body.Close()
+			fmt.Printf("Успешный откат брони через gRPC для user %v на event %v после сбоя Order Service\n", uid, req.EventID)
 		}
 
-		rollbackURL := fmt.Sprintf("%s/api/v1/inventory/rollback?user_id=%v&event_id=%v", h.inventoryServiceURL, userID, req.EventID)
-		rbResp, rbErr := http.Post(rollbackURL, "application/json", nil)
-		if rbErr != nil {
-			fmt.Printf("Ошибка выполнения отката брони в Inventory: %v\n", rbErr)
-		} else {
-			_ = rbResp.Body.Close()
-			fmt.Printf("Успешный откат брони для user %v на event %v после сбоя Order Service\n", userID, req.EventID)
+		if st.Code() == codes.InvalidArgument {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": st.Message(),
+			})
 		}
 
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Не удалось создать заказ в системе (бронь автоматически снята)",
 		})
 	}
-	defer orderResp.Body.Close()
 
-	body, _ := io.ReadAll(orderResp.Body)
-	c.Set("Content-Type", "application/json")
-	return c.Status(fiber.StatusCreated).Send(body)
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"id":        orderResp.Id,
+		"userId":    orderResp.UserId,
+		"eventId":   orderResp.EventId,
+		"price":     orderResp.Price,
+		"status":    orderResp.Status.String(),
+		"createdAt": orderResp.CreatedAt,
+	})
 }

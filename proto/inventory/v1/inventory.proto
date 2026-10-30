@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package inventory.v1;
+
+option go_package = "inventory-service/pkg/api/inventory/v1;inventoryv1";
+option java_multiple_files = true;
+option java_package = "com.example.orderservice.grpc.inventory";
+option java_outer_classname = "InventoryProto";
+
+service InventoryService {
+  rpc ReserveStock(ReserveStockRequest) returns (ReserveStockResponse);
+  rpc RollbackStock(RollbackStockRequest) returns (RollbackStockResponse);
+  rpc GetStock(GetStockRequest) returns (GetStockResponse);
+  rpc InitStock(InitStockRequest) returns (InitStockResponse);
+}
+
+enum ReservationStatus {
+  RESERVATION_STATUS_UNSPECIFIED = 0;
+  RESERVATION_STATUS_RESERVED = 1;
+  RESERVATION_STATUS_SOLD_OUT = 2;
+  RESERVATION_STATUS_ALREADY_RESERVED = 3;
+}
+
+message ReserveStockRequest {
+  int64 event_id = 1;
+  int64 user_id = 2;
+}
+
+message ReserveStockResponse {
+  ReservationStatus status = 1;
+  string message = 2;
+}
+
+message RollbackStockRequest {
+  int64 event_id = 1;
+  int64 user_id = 2;
+}
+
+message RollbackStockResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetStockRequest {
+  int64 event_id = 1;
+}
+
+message GetStockResponse {
+  int64 event_id = 1;
+  int64 stock = 2;
+}
+
+message InitStockRequest {
+  int64 event_id = 1;
+  int64 amount = 2;
+}
+
+message InitStockResponse {
+  bool success = 1;
+  string message = 2;
+}

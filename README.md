@@ -16,33 +16,36 @@
 
 ## Архитектура системы
 
-Высокопроизводительный слой приема трафика, лимитов и кэширования на **Go (Fiber)** вынесен на периметр и защищает транзакционное ядро на **Java (Spring Boot)**. Межсервисное взаимодействие между сервисами заказов, платежей, остатков и уведомлений организовано асинхронно через шину событий **Apache Kafka**.
+Высокопроизводительный слой приема трафика, лимитов и кэширования на **Go (Fiber)** вынесен на периметр и защищает транзакционное ядро на **Java (Spring Boot)**. Межсервисные синхронные вызовы между Gateway и бэкенд-сервисами переведены на бинарный высокоэффективный протокол **gRPC / Protocol Buffers (HTTP/2)**, а реактивное взаимодействие между сервисами заказов, платежей, остатков и уведомлений организовано асинхронно через шину событий **Apache Kafka**.
 
 ```mermaid
 flowchart TD
-    Client([Web UI / Клиент]) -->|HTTP / WebSockets| Gateway[API Gateway Go / Fiber]
+    Client([Web UI / K6]) -->|HTTP REST / WebSockets| Gateway[API Gateway Go / Fiber]
     
-    subgraph Go Edge Services
-        Gateway -->|1. Sliding Window & Идемпотентность| Redis[(Redis 7)]
-        Gateway -->|2. Бронь билета| Inventory[Inventory Service Go]
-        Inventory -->|3. Атомарный Lua-скрипт| Redis
+    subgraph gRPC Inter-Service Perimeter HTTP/2
+        Gateway -->|1. gRPC ReserveStock| Inventory[Inventory Service Go :50051]
+        Gateway -->|2. gRPC CreateOrder| Order[Order Service Spring Boot :9091]
+    end
+
+    subgraph Go Edge Data
+        Gateway -->|Sliding Window & Idempotency| Redis[(Redis 7)]
+        Inventory -->|Атомарный Lua-скрипт DECR| Redis
     end
     
     subgraph Java Core Services
-        Gateway -->|4. Создать заказ| Order[Order Service Spring Boot]
-        Order -->|5. ACID транзакция: Order + Outbox| Postgres[PostgreSQL 16]
-        Order -->|6. Outbox Publisher| Kafka{Apache Kafka}
+        Order -->|3. ACID транзакция: Order + Outbox| Postgres[PostgreSQL 16]
+        Order -->|4. Outbox Publisher| Kafka{Apache Kafka}
         
-        Kafka -->|7. Вычитать заказ| Payment[Payment Service Spring Boot]
-        Payment -->|8. Провести платеж| Postgres
-        Payment -->|9. Отправить статус оплаты| Kafka
+        Kafka -->|5. Вычитать заказ| Payment[Payment Service Spring Boot]
+        Payment -->|6. Провести платеж| Postgres
+        Payment -->|7. Отправить статус оплаты| Kafka
     end
     
     subgraph Event-Driven Reactions
-        Kafka -->|10. Обновить статус PAID / CANCELLED| Order
-        Kafka -->|11. Откат брони при FAILED| Inventory
-        Kafka -->|12. Стрим событий| Notification[Notification Service Go]
-        Notification -->|13. Push в браузер| Client
+        Kafka -->|8. Обновить статус PAID / CANCELLED| Order
+        Kafka -->|9. Откат брони при FAILED| Inventory
+        Kafka -->|10. Стрим событий| Notification[Notification Service Go]
+        Notification -->|11. Push в браузер| Client
     end
 ```
 
@@ -50,6 +53,7 @@ flowchart TD
 
 ## Ключевые инженерные решения и паттерны
 
+* **Межсервисный gRPC + Protocol Buffers (HTTP/2):** Внутренняя синхронная коммуникация `Gateway ➔ Inventory` и `Gateway ➔ Order` переведена с REST JSON на бинарный gRPC со строгими контрактами `.proto`. Это устранило оверхед на сериализацию/десериализацию JSON и обеспечивает мультиплексирование потоков в одном постоянном TCP-соединении.
 * **Защита от овербукинга (Redis Lua):** Бронирование остатков выполняется атомарным скриптом на языке Lua внутри памяти Redis. Это полностью исключает состояние гонки (Race Condition) при параллельных запросах сотен пользователей.
 * **1 билет в одни руки:** Lua-скрипт проверяет наличие уже существующей активной брони у пользователя (`KEYS[2]`). Если пользователь уже забронировал билет, повторный запрос отклоняется (`409 already_reserved`).
 * **Transactional Outbox (Защита от Dual-Write):** `Order Service` сохраняет заказ и событие для Kafka в рамках единой неделимой транзакции PostgreSQL. Фоновый паблишер гарантированно доставляет события в брокер с семантикой At-Least-Once даже при временном отказе Kafka.

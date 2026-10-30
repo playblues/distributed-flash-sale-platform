@@ -75,6 +75,8 @@ services:
       JWT_SECRET: "my_super_secret_key_12345"
       INVENTORY_SERVICE_URL: "http://flash-sale-inventory:3001"
       ORDER_SERVICE_URL: "http://flash-sale-orders:8081"
+      INVENTORY_GRPC_ENDPOINT: "flash-sale-inventory:50051"
+      ORDER_GRPC_ENDPOINT: "flash-sale-orders:9091"
       RATE_LIMIT: "5"
       RATE_LIMIT_WINDOW: "10s"
     depends_on:
@@ -88,8 +90,10 @@ services:
     container_name: flash-sale-inventory
     ports:
       - "3001:3001"
+      - "50051:50051"
     environment:
       PORT: "3001"
+      GRPC_PORT: "50051"
       REDIS_ADDR: "redis:6379"
       KAFKA_BROKER: "kafka:29092"
     depends_on:
@@ -102,9 +106,11 @@ services:
     container_name: flash-sale-orders
     ports:
       - "8081:8081"
+      - "9091:9091"
     environment:
       SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/flash_sale_db"
       SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      GRPC_SERVER_PORT: "9091"
     depends_on:
       - postgres
       - kafka

@@ -8,5 +8,5 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o inventory-app ./cmd/ma
 FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/inventory-app .
-EXPOSE 3001
+EXPOSE 3001 50051
 CMD ["./inventory-app"]
